@@ -1,0 +1,159 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Figtree:ital,wght@0,400;0,500;0,600;1,400&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-bg: #0c0d0c;
+  --color-surface: #151715;
+  --color-elevated: #1c1f1c;
+  --color-fg: #ecece6;
+  --color-muted: #8d9188;
+  --color-subtle: #6a6e66;
+  --color-primary: #d7ddd8;
+  --color-primary-fg: #121412;
+  --color-border: color-mix(in oklab, var(--color-fg) 12%, transparent);
+  --color-border-strong: color-mix(in oklab, var(--color-fg) 22%, transparent);
+  --color-ring: #d7ddd8;
+  --color-danger: #c46b62;
+  --color-ok: #7f9b86;
+
+  --font-sans: "Figtree", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-2xl: 32px;
+
+  --shadow-border: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-border-hover: 0 0 0 1px rgba(255, 255, 255, 0.14);
+  --shadow-lift: 0 18px 40px -28px rgba(0, 0, 0, 0.7);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+:root:not(.dark) {
+  --color-bg: #f3f1ea;
+  --color-surface: #fffcf5;
+  --color-elevated: #ffffff;
+  --color-fg: #1a1c19;
+  --color-muted: #5f635c;
+  --color-subtle: #7a7e76;
+  --color-primary: #1a1c19;
+  --color-primary-fg: #f4f2eb;
+  --color-border: color-mix(in oklab, var(--color-fg) 12%, transparent);
+  --color-border-strong: color-mix(in oklab, var(--color-fg) 20%, transparent);
+  --color-ring: #1a1c19;
+  --color-danger: #a14a42;
+  --color-ok: #3f6a4c;
+  --shadow-border:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 1px 2px -1px rgba(0, 0, 0, 0.06),
+    0 2px 4px 0 rgba(0, 0, 0, 0.04);
+  --shadow-border-hover:
+    0 0 0 1px rgba(0, 0, 0, 0.1),
+    0 1px 2px -1px rgba(0, 0, 0, 0.08),
+    0 8px 20px -12px rgba(0, 0, 0, 0.12);
+  --shadow-lift: 0 22px 40px -28px rgba(26, 28, 25, 0.28);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  body {
+    min-height: 100dvh;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  img {
+    outline: 1px solid color-mix(in oklab, var(--color-fg) 10%, transparent);
+    outline-offset: -1px;
+  }
+}
+
+.bed-grid {
+  background-color: var(--color-bg);
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--color-fg) 5.5%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--color-fg) 5.5%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: center top;
+}
+
+.bed-fade {
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 18%, #000 20%, transparent 72%);
+}
+
+.shimmer {
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    color-mix(in oklab, var(--color-fg) 14%, transparent) 50%,
+    transparent 80%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes layer-rise {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer,
+  .layer-stack span {
+    animation: none !important;
+  }
+}
