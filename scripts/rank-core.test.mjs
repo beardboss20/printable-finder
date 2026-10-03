@@ -408,3 +408,10 @@ test("catalog mappers keep free models and build direct urls", () => {
   assert.equal(things[0].url, "https://www.thingiverse.com/thing:99");
   assert.equal(things[0].author, "maker");
 });
+
+test("text-only analysis adds the head noun phrase as generic name and query", () => {
+  const a = analysisFromText("brass wall hook");
+  assert.equal(a.genericName, "wall hook");
+  assert.deepEqual(a.searchQueries, ["brass wall hook", "wall hook"]);
+  assert.deepEqual(analysisFromText("cable clip").searchQueries, ["cable clip"]);
+});

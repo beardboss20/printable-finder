@@ -245,17 +245,21 @@ function genericDeviceHint(analysis) {
 
 export function analysisFromText(text) {
   const name = asString(text, 120);
+  // Without the AI step, use the head noun phrase ("brass wall hook" -> "wall hook")
+  // as the generic name and a second query, so adjectives don't sink every match.
+  const words = name.split(/\s+/).filter(Boolean);
+  const head = words.length > 2 ? words.slice(-2).join(" ") : name;
   return {
     category: name ? "described object" : "",
     specificName: name,
-    genericName: name,
+    genericName: head,
     distinguishingFeatures: [],
     shape: "",
     materialGuess: "",
     kind: "other",
     isLikelyPrintable: Boolean(name),
     confidence: name ? "medium" : "low",
-    searchQueries: name ? [name] : [],
+    searchQueries: name ? uniqueStrings([name, head]) : [],
     synonyms: [],
     excludePhrases: [],
     identificationNote: "",
