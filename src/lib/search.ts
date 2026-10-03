@@ -44,13 +44,18 @@ function validateInput(input: SearchInput): SearchInput {
 
 function needsDescription(message: string, timings: TimingsMs): SearchOutcome {
   const configured = message.includes("isn't configured");
+  const busy = message.includes("busy");
   return {
     status: "needs_description",
     verdict: "none",
     verdictTitle: configured
       ? "Photo recognition isn't configured on this server yet"
-      : "Photo recognition is unavailable right now",
-    verdictDetail: "Please type what the object is.",
+      : busy
+        ? "Photo recognition is busy right now"
+        : "Photo recognition is unavailable right now",
+    verdictDetail: busy
+      ? "Too many photo searches in the last minute. Wait a moment and retry, or type what the object is."
+      : "Please type what the object is.",
     objectName: "",
     description: emptyDescription(),
     models: [],
@@ -79,7 +84,17 @@ async function runSearch(data: SearchInput): Promise<SearchOutcome> {
     });
   }
 
-  const queries = analyzed.analysis.searchQueries.filter(Boolean).slice(0, 4);
+  // Printables matches every word, so long specific phrases often return 0.
+  // Always include the short generic name alongside the specific queries.
+  const sq = analyzed.analysis.searchQueries.filter(Boolean);
+  const queries = [
+    ...new Map(
+      [...sq.slice(0, 3), analyzed.analysis.genericName, ...sq.slice(3)]
+        .map((q) => (q || "").trim())
+        .filter(Boolean)
+        .map((q) => [q.toLowerCase(), q] as const),
+    ).values(),
+  ].slice(0, 4);
   if (!queries.length && data.text) queries.push(data.text);
   if (!queries.length) {
     return needsDescription(
@@ -98,7 +113,11 @@ async function runSearch(data: SearchInput): Promise<SearchOutcome> {
   const searchMs = Date.now() - searchStarted;
 
   const rankStarted = Date.now();
-  let ranked: Awaited<ReturnType<typeof rankCandidates>> = { models: [], usedVision: false };
+  let ranked: Awaited<ReturnType<typeof rankCandidates>> = {
+    models: [],
+    usedVision: false,
+    rateLimited: false,
+  };
   if (catalog.models.length && left() > 1_200) {
     ranked = await rankCandidates({
       models: catalog.models,
@@ -115,8 +134,23 @@ async function runSearch(data: SearchInput): Promise<SearchOutcome> {
     analyzed.analysis.identificationNote,
     ranked.models.length ? "success" : "empty",
   );
-  const detail = [verdict.verdictDetail, analyzed.photoNote, note].filter(Boolean).join(" ");
+  const busyNote = ranked.rateLimited
+    ? "The photo service is busy (too many searches this minute), so these were matched by title only. Try again in a minute for a visual comparison."
+    : "";
+  const detail = [verdict.verdictDetail, busyNote, analyzed.photoNote, note]
+    .filter(Boolean)
+    .join(" ");
   const bestQuery = queries[0] || analyzed.analysis.specificName || data.text;
+
+  const timingsMs = {
+    analyze: analyzeMs,
+    search: searchMs,
+    rank: rankMs,
+    total: Date.now() - started,
+  };
+  console.log(
+    `[search] done verdict=${verdict.verdict} vision=${ranked.usedVision} rateLimited=${ranked.rateLimited} models=${ranked.models.length} sites=${catalog.siteStatus.map((s) => `${s.site}:${s.status}:${s.count}`).join(",")} ms=${JSON.stringify(timingsMs)}`,
+  );
 
   return {
     status: "ok",
@@ -131,12 +165,7 @@ async function runSearch(data: SearchInput): Promise<SearchOutcome> {
     queriesUsed: queries,
     starterIdeas: analyzed.analysis.starterIdeas,
     usedVision: ranked.usedVision,
-    timingsMs: {
-      analyze: analyzeMs,
-      search: searchMs,
-      rank: rankMs,
-      total: Date.now() - started,
-    },
+    timingsMs,
   };
 }
 

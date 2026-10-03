@@ -601,7 +601,8 @@ export function computeVerdict({ topScore10, usedVision }) {
         "Nothing on these sites scored as a close match. Try a clearer photo or a more specific description, or design a simple version in Tinkercad.",
     };
   }
-  if (vision && score >= 8) {
+  // Exact needs a visual comparison AND a 9-10 ("essentially the same object").
+  if (vision && score >= 9) {
     return {
       verdict: "exact",
       verdictTitle: "Yes — a printable match exists",

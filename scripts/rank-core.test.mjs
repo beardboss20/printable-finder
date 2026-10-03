@@ -200,9 +200,10 @@ test("dedupe and merge collapse urls and normalized titles", () => {
 });
 
 test("verdict requires vision for an exact match", () => {
-  assert.equal(computeVerdict({ topScore10: 8, usedVision: true }).verdict, "exact");
+  assert.equal(computeVerdict({ topScore10: 8, usedVision: true }).verdict, "similar");
+  assert.equal(computeVerdict({ topScore10: 9, usedVision: true }).verdict, "exact");
   assert.equal(
-    computeVerdict({ topScore10: 8, usedVision: true }).verdictTitle,
+    computeVerdict({ topScore10: 9, usedVision: true }).verdictTitle,
     "Yes — a printable match exists",
   );
   assert.equal(computeVerdict({ topScore10: 9.5, usedVision: false }).verdict, "similar");

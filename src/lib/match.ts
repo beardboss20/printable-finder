@@ -7,7 +7,7 @@ import {
 } from "./rank-core.js";
 import { SITE_LABEL } from "./sites";
 import type { Analysis, PrintableModel, RankedModel } from "./types";
-import { xaiChat } from "./xai";
+import { xaiChat, xaiCoolingDown } from "./xai";
 
 const SCORE_SCHEMA = {
   type: "object",
@@ -19,9 +19,10 @@ const SCORE_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["index", "score", "reason"],
+        required: ["index", "sameObjectType", "score", "reason"],
         properties: {
           index: { type: "integer" },
+          sameObjectType: { type: "boolean" },
           score: { type: "integer" },
           reason: { type: "string" },
         },
@@ -31,6 +32,18 @@ const SCORE_SCHEMA = {
 } as const;
 
 type ScoreRow = { score: number; reason: string };
+
+// Scores below this (0-10 scale) are dropped as weak matches.
+const MIN_SCORE = 5;
+
+const RUBRIC = `Scoring rubric (integers 0-10):
+- 9-10: essentially the same object as the photo; printing it would give the user what they photographed.
+- 7-8: same object type and function with a similar shape.
+- 5-6: same object type but a noticeably different shape or style, or a very close relative.
+- 2-4: only loosely related (same broad category, or shares one feature).
+- 0-1: a different object. Sharing a word is not enough: a "top hat" printer part is 0 for a figurine wearing a top hat.
+Decide sameObjectType first: true only if the candidate is the same kind of object with the same purpose (a figurine/statue for a figurine, a hook for a hook, a planter/pot for a planter). Functional printer parts, tools, or brackets are never the same type as a decorative figure, and vice versa. If sameObjectType is false the score must be 0-3.
+Be strict. Most candidates from a keyword search should score below 7.`;
 
 function clampScore(value: unknown): number | null {
   const score = typeof value === "number" ? value : Number(value);
@@ -47,9 +60,16 @@ function parseScoreMap(raw: string, count: number): Map<number, ScoreRow> | null
     const map = new Map<number, ScoreRow>();
     for (const row of parsed.scores) {
       if (!row || typeof row !== "object") continue;
-      const record = row as { index?: unknown; score?: unknown; reason?: unknown };
+      const record = row as {
+        index?: unknown;
+        score?: unknown;
+        reason?: unknown;
+        sameObjectType?: unknown;
+      };
       const index = typeof record.index === "number" ? record.index : Number(record.index);
-      const score = clampScore(record.score);
+      let score = clampScore(record.score);
+      // A different kind of object can never be a real match, whatever the score says.
+      if (score != null && record.sameObjectType === false) score = Math.min(score, 3);
       if (!Number.isInteger(index) || index < 1 || index > count || score == null) continue;
       const reason =
         typeof record.reason === "string"
@@ -63,11 +83,81 @@ function parseScoreMap(raw: string, count: number): Map<number, ScoreRow> | null
   }
 }
 
-function visionThumbnail(url: string | null): string | null {
-  if (!url || !isUsableThumbnailUrl(url)) return null;
-  if (url.startsWith("data:image/")) return url;
-  if (url.startsWith("https://")) return url;
+const THUMB_TIMEOUT_MS = 2_500;
+const THUMB_MAX_BYTES = 600_000;
+
+/** Ask each site's CDN for a small thumbnail instead of the full-size photo. */
+export function smallThumbUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "media.printables.com" && !parsed.pathname.includes("/thumbs/")) {
+      // media/prints/<id>/images/<dir>/<file>.jpg -> .../<dir>/thumbs/inside/320x240/jpg/<file>.jpg
+      const parts = parsed.pathname.split("/");
+      const file = parts.pop() || "";
+      const base = file.replace(/\.[a-z0-9]+$/i, "");
+      return `${parsed.origin}${parts.join("/")}/thumbs/inside/320x240/jpg/${base}.jpg`;
+    }
+    if (parsed.hostname.endsWith("bblmw.com") && !parsed.search) {
+      return `${url}?x-oss-process=image/resize,w_320/format,png`;
+    }
+  } catch {
+    /* fall through */
+  }
+  return url;
+}
+
+function sniffType(buf: Buffer): "image/jpeg" | "image/png" | null {
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length > 8 && buf[0] === 0x89 && buf.toString("latin1", 1, 4) === "PNG")
+    return "image/png";
   return null;
+}
+
+async function download(url: string, signal: AbortSignal): Promise<string | null> {
+  const res = await fetch(url, {
+    signal,
+    headers: {
+      Accept: "image/jpeg,image/png;q=0.9,*/*;q=0.5",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    },
+  });
+  if (!res.ok) return null;
+  const declared = Number(res.headers.get("content-length") || 0);
+  if (declared > THUMB_MAX_BYTES) return null;
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.byteLength === 0 || buf.byteLength > THUMB_MAX_BYTES) return null;
+  // Some CDNs label images application/octet-stream (or serve WebP); xAI accepts only
+  // JPEG/PNG, so trust the bytes, not the header.
+  const type = sniffType(buf);
+  if (!type) return null;
+  return `data:${type};base64,${buf.toString("base64")}`;
+}
+
+/**
+ * Download a candidate thumbnail ourselves and inline it as a data URL.
+ * Passing remote URLs made xAI fetch them and occasionally fail the whole call
+ * with a 400. Small CDN variants keep the rerank request (and latency) small.
+ */
+async function fetchThumbnail(url: string | null, signal: AbortSignal): Promise<string | null> {
+  if (!url) return null;
+  if (url.startsWith("data:image/")) return isUsableThumbnailUrl(url) ? url : null;
+  if (!url.startsWith("https://")) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), THUMB_TIMEOUT_MS);
+  const onAbort = () => controller.abort();
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    const small = smallThumbUrl(url);
+    const got = await download(small, controller.signal).catch(() => null);
+    if (got || small === url || controller.signal.aborted) return got;
+    return await download(url, controller.signal);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 function toRanked(model: PrintableModel, score10: number, reason: string): RankedModel {
@@ -87,7 +177,7 @@ function applyScores(
   const ranked: RankedModel[] = [];
   candidates.forEach((model, index) => {
     const row = scores.get(index + 1);
-    if (!row || row.score < 4) return;
+    if (!row || row.score < MIN_SCORE) return;
     ranked.push(toRanked(model, row.score, row.reason || fallbackReason));
   });
   ranked.sort((a, b) => b.matchScore - a.matchScore);
@@ -144,14 +234,21 @@ async function visionRank(
   > = [
     {
       type: "text",
-      text: `The first image is the user's photo.\n${intentText(analysis)}\n\nScore every candidate from 0 to 10 for how closely the 3D model matches the object in the photo (same object type and function, similar shape and style). 10 is the same kind of thing. 5 is related. 0-3 is a different object. If the note says the photo is a finished device and we are hunting an accessory, score the accessory, not whether the model looks like the device. Candidates without an image are judged by title only. Return one JSON score per candidate index, with a short reason.`,
+      text: `The first image is the user's photo.\n${intentText(analysis)}\n\nScore every candidate for how closely the 3D model matches the object in the photo (same object type and function, similar shape and style).\n\n${RUBRIC}\n\nIf the note says the photo is a finished device and we are hunting an accessory, score the accessory, not whether the model looks like the device. Candidates without an image are judged by title only. Return one JSON score per candidate index, with a reason of at most 8 words.`,
     },
     { type: "image_url", image_url: { url: imageDataUrl, detail: "auto" } },
   ];
 
+  const thumbAbort = new AbortController();
+  const thumbStarted = Date.now();
+  const thumbs = await Promise.all(
+    candidates.map((model) => fetchThumbnail(model.imageUrl, thumbAbort.signal)),
+  );
+  const thumbMs = Date.now() - thumbStarted;
+  const thumbBytes = thumbs.reduce((n, t) => n + (t ? t.length : 0), 0);
   candidates.forEach((model, index) => {
     const label = `Candidate ${index + 1}: ${model.title} (${SITE_LABEL[model.site]})`;
-    const thumb = visionThumbnail(model.imageUrl);
+    const thumb = thumbs[index];
     content.push({
       type: "text",
       text: thumb ? label : `${label}\n(no usable photo — judge by title only)`,
@@ -161,6 +258,7 @@ async function visionRank(
     }
   });
 
+  const callStarted = Date.now();
   const result = await xaiChat({
     content,
     schemaName: "model_scores",
@@ -169,6 +267,9 @@ async function visionRank(
     temperature: 0,
     timeoutMs,
   });
+  console.log(
+    `[match] vision rerank thumbs=${thumbs.filter(Boolean).length}/${candidates.length} thumbKB=${Math.round(thumbBytes / 1024)} thumbMs=${thumbMs} xaiMs=${Date.now() - callStarted} ok=${result.ok}`,
+  );
   if (!result.ok) {
     console.error("[match] vision rerank failed", result.reason, result.status ?? "");
     return null;
@@ -190,7 +291,10 @@ async function textRank(
 
 ${intentText(analysis)}
 
-Give each title an integer score from 0 to 10. 10 means the title is clearly that object or the accessory we are hunting. 5 means related. 0-3 means a different object. Drop nothing from the JSON; score every index. Reason is one short sentence.
+Give each title an integer score from 0 to 10 using this rubric, judging by title only:
+${RUBRIC}
+
+Drop nothing from the JSON; score every index. Reason is at most 8 words.
 
 ${candidateLines(candidates)}`;
 
@@ -216,9 +320,9 @@ export async function rankCandidates(input: {
   analysis: Analysis;
   imageDataUrl?: string;
   timeoutMs?: number;
-}): Promise<{ models: RankedModel[]; usedVision: boolean }> {
+}): Promise<{ models: RankedModel[]; usedVision: boolean; rateLimited: boolean }> {
   const shortlist = prefilterCandidates(input.models, input.analysis, 14);
-  if (shortlist.length === 0) return { models: [], usedVision: false };
+  if (shortlist.length === 0) return { models: [], usedVision: false, rateLimited: false };
 
   const budget = Math.max(0, input.timeoutMs ?? 15_000);
   const started = Date.now();
@@ -228,15 +332,19 @@ export async function rankCandidates(input: {
   if (hasKey && photo && budget >= 2_000) {
     const visionTimeout = Math.min(15_000, budget);
     const vision = await visionRank(shortlist, input.analysis, photo, visionTimeout);
-    if (vision) return { models: vision, usedVision: true };
+    if (vision) return { models: vision, usedVision: true, rateLimited: false };
   }
 
   const elapsed = Date.now() - started;
   const remaining = budget - elapsed;
-  if (hasKey && remaining >= 2_000) {
+  if (hasKey && remaining >= 2_000 && !xaiCoolingDown()) {
     const text = await textRank(shortlist, input.analysis, Math.min(8_000, remaining));
-    if (text) return { models: text, usedVision: false };
+    if (text) return { models: text, usedVision: false, rateLimited: false };
   }
 
-  return { models: lexicalRank(shortlist, input.analysis), usedVision: false };
+  return {
+    models: lexicalRank(shortlist, input.analysis),
+    usedVision: false,
+    rateLimited: hasKey && xaiCoolingDown(),
+  };
 }
