@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouteContext } from "@tanstack/react-router";
 import { GROK_PROVIDERS, authEnabled, signIn } from "@/lib/auth/client";
 import { Button } from "@/components/ui/button";
 import { AppHeader } from "@/components/app-header";
@@ -7,6 +7,7 @@ import { AppFooter } from "@/components/app-footer";
 export const Route = createFileRoute("/login")({ component: Login });
 
 function Login() {
+  const { accountsAvailable } = useRouteContext({ from: "__root__" });
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-fg">
       <AppHeader />
@@ -16,7 +17,9 @@ function Login() {
           Optional. You can search and open model pages without an account.
         </p>
         <div className="mt-8 space-y-3">
-          {authEnabled ? (
+          {!accountsAvailable ? (
+            <p className="text-sm text-muted">Sign-in isn't available on this server yet.</p>
+          ) : authEnabled ? (
             GROK_PROVIDERS.map((p) => (
               <Button
                 key={p.providerId}

@@ -1,45 +1,68 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 import { AppFooter } from "@/components/app-footer";
 import { AppHeader } from "@/components/app-header";
-import { LoadingState, ResultsPanel } from "@/components/results-panel";
+import { ErrorCard, LoadingState, ResultsPanel } from "@/components/results-panel";
 import { SearchPanel } from "@/components/search-panel";
 import { findPrintableModels } from "@/lib/search";
 import type { SearchOutcome } from "@/lib/types";
 
 export const Route = createFileRoute("/")({ component: Home });
 
+function friendlyError(err: unknown): string {
+  if (err instanceof Error && err.message.trim()) return err.message.trim();
+  if (err && typeof err === "object" && "message" in err && typeof err.message === "string") {
+    return err.message.trim() || "Something went sideways. Try again.";
+  }
+  return "Something went sideways. Try again.";
+}
+
 function Home() {
   const [busy, setBusy] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [outcome, setOutcome] = useState<SearchOutcome | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const lastInput = useRef<{ text: string; imageDataUrl?: string } | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!busy) return;
-    const id = window.setInterval(() => setTick((n) => n + 1), 1800);
+    const started = Date.now();
+    const id = window.setInterval(() => setElapsedMs(Date.now() - started), 400);
     return () => window.clearInterval(id);
   }, [busy]);
 
   useEffect(() => {
-    if (busy || !outcome) return;
-    resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [busy, outcome]);
+    if (busy) return;
+    if (outcome?.status === "needs_description") {
+      const input = document.getElementById("describe");
+      if (input instanceof HTMLInputElement) input.focus();
+      return;
+    }
+    if (outcome || error) {
+      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [busy, outcome, error]);
 
   async function onSearch(input: { text: string; imageDataUrl?: string }) {
+    lastInput.current = input;
     setBusy(true);
-    setTick(0);
+    setElapsedMs(0);
+    setError(null);
+    setOutcome(null);
     try {
       const next = await findPrintableModels({ data: input });
       setOutcome(next);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Something went sideways. Try again.";
-      toast.error(message);
+      setError(friendlyError(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  function retry() {
+    if (lastInput.current) void onSearch(lastInput.current);
   }
 
   return (
@@ -55,18 +78,21 @@ function Home() {
             Can I 3D Print This?
           </h1>
           <p className="mx-auto mt-4 max-w-lg text-base leading-relaxed text-muted">
-            Upload a photo or describe an object. We look across popular model
-            sites for a free file you can print tonight.
+            Upload a photo or describe an object. We look across popular model sites for a free file
+            you can print tonight.
           </p>
         </div>
 
         <div className="mx-auto mt-10 w-full max-w-xl">
-          <SearchPanel busy={busy} onSearch={onSearch} />
+          <SearchPanel busy={busy} onSearch={onSearch} onPreviewChange={setPreview} />
         </div>
 
         <div ref={resultsRef} className="mt-12 w-full scroll-mt-24">
-          {busy ? <LoadingState messageIndex={tick} /> : null}
-          {!busy && outcome ? <ResultsPanel outcome={outcome} /> : null}
+          {busy ? (
+            <LoadingState elapsedMs={elapsedMs} hasPhoto={Boolean(preview)} preview={preview} />
+          ) : null}
+          {!busy && error ? <ErrorCard message={error} onRetry={retry} /> : null}
+          {!busy && !error && outcome ? <ResultsPanel outcome={outcome} /> : null}
         </div>
       </main>
       <AppFooter />

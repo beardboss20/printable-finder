@@ -13,6 +13,6 @@ export function userFacingNote(note: string, mode: "success" | "empty"): string 
   const trimmed = note.replace(/\s+/g, " ").trim();
   if (!trimmed) return "";
   if (REASONING.some((pattern) => pattern.test(trimmed))) return "";
-  if (mode === "success" && trimmed.length > 160) return "";
+  if (mode === "success" && trimmed.length > 280) return "";
   return trimmed;
 }

@@ -1,4 +1,5 @@
 import { getRequest } from "@tanstack/react-start/server";
+import { deployedWithoutDatabase } from "../db-availability";
 import { auth, authConfigured } from "./server";
 
 /**
@@ -56,7 +57,7 @@ export type VerifiedUser = { id: string; email: string | null };
 export async function getSessionUser(
   bearerToken?: string,
 ): Promise<VerifiedUser | null> {
-  if (!authConfigured) return null;
+  if (!authConfigured || deployedWithoutDatabase()) return null;
   const request = getRequest();
   if (!request) return null;
   let headers = request.headers;

@@ -1,10 +1,13 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useRouteContext } from "@tanstack/react-router";
 import { signOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { Button } from "@/components/ui/button";
 
 export function AuthSlot() {
+  const { accountsAvailable } = useRouteContext({ from: "__root__" });
   const { user, isPending } = useCurrentUserState();
+
+  if (!accountsAvailable) return null;
 
   if (isPending) {
     return <div className="size-9 animate-pulse rounded-full bg-elevated" />;
