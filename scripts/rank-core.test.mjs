@@ -79,6 +79,57 @@ test("lexical scores stay below an exact visual match", () => {
   assert.equal(lexicalToTen(-1), 0);
 });
 
+test("lexical ordering breaks ties by tokens, exact phrase, then popularity", () => {
+  const richer = model({
+    title: "Cable clip holder",
+    url: "https://example.com/rich",
+    likes: 0,
+    downloads: 0,
+  });
+  const popular = model({
+    title: "Cable clip",
+    url: "https://example.com/popular",
+    likes: 8000,
+    downloads: 20000,
+  });
+  const swapped = model({
+    title: "clip cable",
+    url: "https://example.com/swapped",
+    likes: 9000,
+    downloads: 0,
+  });
+  const plain = model({
+    title: "Cable clip",
+    url: "https://example.com/plain",
+    likes: 3,
+    downloads: 1,
+  });
+
+  assert.equal(lexicalScore(richer, cable), lexicalScore(popular, cable));
+  assert.equal(lexicalScore(popular, cable), lexicalScore(swapped, cable));
+  assert.equal(lexicalScore(popular, cable), lexicalScore(plain, cable));
+
+  const ordered = prefilterCandidates([swapped, plain, popular, richer], cable, 4);
+  assert.deepEqual(
+    ordered.map((entry) => entry.url),
+    [
+      "https://example.com/rich",
+      "https://example.com/popular",
+      "https://example.com/plain",
+      "https://example.com/swapped",
+    ],
+  );
+
+  const weak = model({
+    title: "Cat sculpture",
+    url: "https://example.com/cat",
+    likes: 100000,
+    downloads: 100000,
+  });
+  const namedFirst = prefilterCandidates([weak, plain], cable, 2);
+  assert.equal(namedFirst[0].url, "https://example.com/plain");
+});
+
 test("prefilter keeps thumbnail candidates and drops excluded titles", () => {
   const models = [
     model({

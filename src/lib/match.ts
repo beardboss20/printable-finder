@@ -1,4 +1,5 @@
 import {
+  compareLexical,
   isUsableThumbnailUrl,
   lexicalScore,
   lexicalToTen,
@@ -104,7 +105,7 @@ function lexicalRank(candidates: PrintableModel[], analysis: Analysis): RankedMo
       return { model, ten, reason };
     })
     .filter((row) => row.ten >= 4)
-    .sort((a, b) => b.ten - a.ten)
+    .sort((a, b) => compareLexical(a.model, b.model, analysis))
     .slice(0, 8)
     .map((row) => toRanked(row.model, row.ten, row.reason));
 }

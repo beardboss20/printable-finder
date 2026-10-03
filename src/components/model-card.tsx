@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { SITE_LABEL } from "@/lib/sites";
 import type { RankedModel } from "@/lib/types";
 
-export function ModelCard({ model }: { model: RankedModel }) {
+export function ModelCard({ model, usedVision }: { model: RankedModel; usedVision: boolean }) {
   const [broken, setBroken] = useState(false);
   const percent = Math.round(Math.max(0, Math.min(1, model.matchScore)) * 100);
   const siteLabel = SITE_LABEL[model.site];
@@ -35,10 +35,14 @@ export function ModelCard({ model }: { model: RankedModel }) {
           {model.title}
         </h3>
         {model.author ? <p className="truncate text-xs text-muted">by {model.author}</p> : null}
-        <p className="text-sm leading-relaxed text-muted">
-          <span className="font-medium text-fg tabular-nums">{percent}% match</span>
-          {model.matchReason ? ` — ${model.matchReason}` : null}
-        </p>
+        {usedVision ? (
+          <p className="text-sm leading-relaxed text-muted">
+            <span className="font-medium text-fg tabular-nums">{percent}% match</span>
+            {model.matchReason ? ` — ${model.matchReason}` : null}
+          </p>
+        ) : (
+          <p className="text-xs font-medium text-muted">Title match</p>
+        )}
         <Button asChild variant="secondary" className="mt-auto w-full rounded-lg">
           <a href={model.url} target="_blank" rel="noreferrer">
             Open on {siteLabel}

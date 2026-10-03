@@ -31,7 +31,7 @@ function validateInput(input: SearchInput): SearchInput {
     if (input.imageDataUrl.length > 2_400_000) {
       throw new Error("Photo is too large. Try a smaller image.");
     }
-    if (!/^data:image\/(?:jpeg|jpg|png|webp);/i.test(input.imageDataUrl)) {
+    if (!/^data:image\/(?:jpeg|png)[;,]/i.test(input.imageDataUrl)) {
       throw new Error("Couldn't read this photo format — try a JPG/PNG or a screenshot");
     }
     imageDataUrl = input.imageDataUrl;

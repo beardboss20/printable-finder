@@ -46,7 +46,8 @@ import {
 } from "./preview";
 
 // Kick (and share) PGLite bootstrap as soon as the auth server module loads.
-void ensureDbReady();
+// Swallow failures here; db.ts logs once. Rethrowing would kill the isolate.
+void ensureDbReady().catch(() => undefined);
 
 /**
  * Preview secret must outlive module reloads: PGLite (and its session rows) is

@@ -1,4 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { getAccountsAvailable } from "@/lib/auth/availability";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import { ThemeInit } from "@/components/theme-init";
@@ -13,6 +14,9 @@ const xBanner = host
   : undefined;
 
 export const Route = createRootRoute({
+  beforeLoad: async () => ({
+    accountsAvailable: await getAccountsAvailable(),
+  }),
   head: () => ({
     meta: [
       { charSet: "utf-8" },

@@ -462,10 +462,61 @@ export function lexicalScore(model, analysis) {
     if (includesPhrase(lower, query)) score += 5;
   }
 
+  return Math.round(score * 100) / 100;
+}
+
+function mostSpecificQuery(analysis) {
+  for (const query of analysis?.searchQueries || []) {
+    const text = String(query || "").trim();
+    if (text) return text;
+  }
+  return String(analysis?.specificName || "").trim();
+}
+
+function queryTokenHits(model, analysis) {
+  const tokens = [];
+  const seen = new Set();
+  for (const phrase of [...(analysis?.searchQueries || []), ...(analysis?.synonyms || [])]) {
+    for (const token of tokenize(phrase)) {
+      if (seen.has(token)) continue;
+      seen.add(token);
+      tokens.push(token);
+    }
+  }
+  return tokenOverlap(String(model?.title || ""), tokens);
+}
+
+function exactQueryMatch(model, analysis) {
+  const phrase = mostSpecificQuery(analysis).toLowerCase();
+  if (!phrase) return 0;
+  return String(model?.title || "")
+    .toLowerCase()
+    .includes(phrase)
+    ? 1
+    : 0;
+}
+
+function popularityValue(model) {
   const likes = typeof model?.likes === "number" ? model.likes : 0;
   const downloads = typeof model?.downloads === "number" ? model.downloads : 0;
-  score += Math.min(0.4, Math.log10(1 + likes * 2 + downloads * 0.35) * 0.08);
-  return Math.round(score * 100) / 100;
+  return likes * 2 + downloads * 0.35;
+}
+
+/**
+ * Sort comparator: higher lexical score first, then more query/synonym tokens,
+ * then an exact phrase hit on the most specific query, then popularity.
+ * A thumbnail only breaks a remaining tie.
+ */
+export function compareLexical(a, b, analysis) {
+  const score = lexicalScore(b, analysis) - lexicalScore(a, analysis);
+  if (score) return score;
+  const tokens = queryTokenHits(b, analysis) - queryTokenHits(a, analysis);
+  if (tokens) return tokens;
+  const exact = exactQueryMatch(b, analysis) - exactQueryMatch(a, analysis);
+  if (exact) return exact;
+  const popularity = popularityValue(b) - popularityValue(a);
+  if (popularity) return popularity;
+  return (b?.imageUrl ? 1 : 0) - (a?.imageUrl ? 1 : 0);
 }
 
 function tokenOverlap(haystack, tokens) {
@@ -501,16 +552,13 @@ export function lexicalToTen(score) {
 }
 
 export function prefilterCandidates(models, analysis, limit = 14) {
-  const scored = [];
+  const kept = [];
   for (const model of models || []) {
-    const score = lexicalScore(model, analysis);
-    if (score < 0) continue;
-    scored.push({ model, score, thumb: model?.imageUrl ? 1 : 0 });
+    if (lexicalScore(model, analysis) < 0) continue;
+    kept.push(model);
   }
-  // Thumbnail is only a tie-break. A stronger title still stays in the shortlist
-  // so the vision call can judge it from the name when the image is missing.
-  scored.sort((a, b) => b.score - a.score || b.thumb - a.thumb);
-  return scored.slice(0, limit).map((row) => row.model);
+  kept.sort((a, b) => compareLexical(a, b, analysis));
+  return kept.slice(0, limit);
 }
 
 export function dedupeModels(models, limit = 40) {

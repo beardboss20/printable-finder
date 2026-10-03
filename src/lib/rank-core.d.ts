@@ -55,6 +55,7 @@ export function parseAnalysis(raw: string, fallbackText: string): Analysis;
 export function normalizeAnalysis(analysis: Analysis, userText: string): Analysis;
 export function lexicalScore(model: ScoreModel, analysis: Analysis): number;
 export function lexicalToTen(score: number): number;
+export function compareLexical(a: ScoreModel, b: ScoreModel, analysis: Analysis): number;
 export function prefilterCandidates<T extends ScoreModel>(
   models: readonly T[],
   analysis: Analysis,

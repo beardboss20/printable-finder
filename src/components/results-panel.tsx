@@ -166,7 +166,7 @@ export function ResultsPanel({ outcome }: { outcome: SearchOutcome }) {
       {outcome.models.length > 0 ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {outcome.models.map((model) => (
-            <ModelCard key={model.id} model={model} />
+            <ModelCard key={model.id} model={model} usedVision={outcome.usedVision} />
           ))}
         </div>
       ) : null}

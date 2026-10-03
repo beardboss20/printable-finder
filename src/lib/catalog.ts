@@ -33,6 +33,7 @@ query SearchModels($query: String!, $limit: Int, $ordering: SearchChoicesEnum) {
 type SiteBatch = {
   status: "ok" | "failed" | "timeout";
   models: PrintableModel[];
+  detail?: string;
 };
 
 export type CatalogResult = {
@@ -59,6 +60,20 @@ function childSignal(parent: AbortSignal, ms: number): { signal: AbortSignal; ca
   };
 }
 
+function browserHeaders(origin: string): Record<string, string> {
+  return {
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    Origin: origin,
+    Referer: `${origin}/`,
+    "User-Agent": UA,
+  };
+}
+
+function bodySnippet(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
 async function fetchJson(
   url: string,
   init: RequestInit | undefined,
@@ -73,8 +88,18 @@ async function fetchJson(
       ...(init?.headers ?? {}),
     },
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const text = await res.text();
+  if (!res.ok) {
+    const snippet = bodySnippet(text);
+    const jsonish = snippet.startsWith("{") || snippet.startsWith("[");
+    throw new Error(jsonish || !snippet ? `HTTP ${res.status}` : `HTTP ${res.status} ${snippet}`);
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    const snippet = bodySnippet(text);
+    throw new Error(snippet ? `JSON parse error ${snippet}` : "JSON parse error");
+  }
 }
 
 async function searchPrintables(
@@ -105,7 +130,7 @@ async function searchThangs(
 ): Promise<PrintableModel[]> {
   const data = await fetchJson(
     `https://thangs.com/api/models/v3/search-by-text?searchTerm=${encodeURIComponent(query)}&page=0`,
-    undefined,
+    { headers: browserHeaders("https://thangs.com") },
     signal,
   );
   return mapThangsPayload(data, limit);
@@ -118,7 +143,13 @@ async function searchMakerWorld(
 ): Promise<PrintableModel[]> {
   const data = await fetchJson(
     `https://makerworld.com/api/v1/search-service/select/design2?keyword=${encodeURIComponent(query)}&limit=${limit}&offset=0`,
-    undefined,
+    {
+      headers: {
+        ...browserHeaders("https://makerworld.com"),
+        "x-bbl-client-type": "web",
+        "x-bbl-app-source": "makerworld",
+      },
+    },
     signal,
   );
   return mapMakerWorldPayload(data, limit);
@@ -168,8 +199,12 @@ async function runBounded(
     return { status: "ok", models };
   } catch (err) {
     const timeout = isAbort(err) || signal.aborted;
-    console.error(`[catalog] ${site} ${timeout ? "timeout" : "failed"}`);
-    return { status: timeout ? "timeout" : "failed", models: [] };
+    const detail = timeout
+      ? "timeout"
+      : err instanceof Error && err.message
+        ? err.message.replace(/\s+/g, " ").trim().slice(0, 180)
+        : "failed";
+    return { status: timeout ? "timeout" : "failed", models: [], detail };
   } finally {
     cancel();
   }
@@ -208,15 +243,22 @@ export async function searchCatalog(queries: string[]): Promise<CatalogResult> {
 
   const buckets = new Map<SiteId, PrintableModel[]>(sites.map((site) => [site, []]));
   const statuses = new Map<SiteId, SiteBatch["status"][]>(sites.map((site) => [site, []]));
+  const details = new Map<SiteId, string>();
 
   settled.forEach((result, index) => {
     const site = jobs[index]!.site;
     if (result.status === "fulfilled") {
       statuses.get(site)?.push(result.value.status);
       buckets.get(site)?.push(...result.value.models);
+      if (result.value.status !== "ok" && result.value.detail) {
+        const previous = details.get(site);
+        if (!previous || (previous === "timeout" && result.value.detail !== "timeout")) {
+          details.set(site, result.value.detail);
+        }
+      }
     } else {
-      console.error(`[catalog] ${site} failed`);
       statuses.get(site)?.push("failed");
+      if (!details.has(site)) details.set(site, "failed");
     }
   });
 
@@ -226,6 +268,10 @@ export async function searchCatalog(queries: string[]): Promise<CatalogResult> {
     let status: SiteStatus["status"] = "failed";
     if (list.some((entry) => entry === "ok")) status = "ok";
     else if (list.length > 0 && list.every((entry) => entry === "timeout")) status = "timeout";
+    if (status !== "ok") {
+      const detail = details.get(site) ?? status;
+      console.error(`[catalog] ${site} ${detail}`);
+    }
     return {
       site,
       status,
