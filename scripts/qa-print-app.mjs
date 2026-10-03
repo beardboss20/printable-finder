@@ -28,7 +28,9 @@ await run("desktop-home", { width: 1280, height: 800 }, async (page) => {
 });
 
 await run("mobile-home", { width: 390, height: 844 }, async (page) => {
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+  );
   console.log("mobile overflow:", overflow);
   await page.screenshot({
     path: "/workspace/screenshots/home-mobile.png",
@@ -39,9 +41,13 @@ await run("mobile-home", { width: 390, height: 844 }, async (page) => {
 await run("search-success", { width: 1280, height: 900 }, async (page) => {
   await page.getByLabel("Describe the item").fill("phone stand");
   await page.getByRole("button", { name: "Can I 3D Print This?" }).click();
-  await page.getByText(/Found \d+ strong match|Closest matches|No solid free printable match/i).waitFor({
-    timeout: 45000,
-  });
+  await page
+    .getByText(
+      /Yes — a printable match exists|Similar designs exist|Nothing close|Photo recognition/i,
+    )
+    .waitFor({
+      timeout: 45000,
+    });
   const summary = await page.locator("h2").first().textContent();
   console.log("success summary:", summary);
   const cards = await page.locator("article").count();
@@ -55,9 +61,13 @@ await run("search-success", { width: 1280, height: 900 }, async (page) => {
 await run("search-nomatch", { width: 1280, height: 900 }, async (page) => {
   await page.getByLabel("Describe the item").fill("qzxvplm unique unobtanium flux widget 99281");
   await page.getByRole("button", { name: "Can I 3D Print This?" }).click();
-  await page.getByText(/Found \d+ strong match|Closest matches|No solid free printable match/i).waitFor({
-    timeout: 45000,
-  });
+  await page
+    .getByText(
+      /Yes — a printable match exists|Similar designs exist|Nothing close|Photo recognition/i,
+    )
+    .waitFor({
+      timeout: 45000,
+    });
   const summary = await page.locator("h2").first().textContent();
   console.log("nomatch summary:", summary);
   await page.screenshot({

@@ -1,201 +1,169 @@
-import type { Analysis, Confidence } from "./types";
+import { normalizeAnalysis, parseAnalysis, analysisFromText } from "./rank-core.js";
+import type { Analysis } from "./types";
+import { xaiChat } from "./xai";
+
+const PHOTO_NOT_CONFIGURED =
+  "Photo recognition isn't configured on this server yet. Please type what the object is.";
+const PHOTO_UNAVAILABLE =
+  "Photo recognition is unavailable right now. Please type what the object is.";
+export const PHOTO_SKIPPED_NOTE =
+  "The photo wasn't analyzed, so these results are based on your description.";
 
 const ANALYSIS_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: [
-    "objectName",
-    "searchQueries",
-    "confidence",
-    "identificationNote",
+    "category",
+    "specificName",
+    "genericName",
+    "distinguishingFeatures",
+    "shape",
+    "materialGuess",
+    "kind",
     "isLikelyPrintable",
-    "starterIdeas",
-    "intent",
-    "coreNouns",
-    "requiredPhrases",
+    "confidence",
+    "searchQueries",
+    "synonyms",
     "excludePhrases",
+    "identificationNote",
+    "starterIdeas",
   ],
   properties: {
-    objectName: { type: "string" },
+    category: { type: "string" },
+    specificName: { type: "string" },
+    genericName: { type: "string" },
+    distinguishingFeatures: {
+      type: "array",
+      items: { type: "string" },
+      maxItems: 8,
+    },
+    shape: { type: "string" },
+    materialGuess: { type: "string" },
+    kind: {
+      type: "string",
+      enum: [
+        "functional_part",
+        "decorative",
+        "toy_figure",
+        "household",
+        "tool",
+        "electronic_device",
+        "other",
+      ],
+    },
+    isLikelyPrintable: { type: "boolean" },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
     searchQueries: {
       type: "array",
       items: { type: "string" },
-      minItems: 1,
-      maxItems: 3,
+      minItems: 4,
+      maxItems: 6,
     },
-    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    synonyms: { type: "array", items: { type: "string" }, maxItems: 8 },
+    excludePhrases: { type: "array", items: { type: "string" }, maxItems: 8 },
     identificationNote: { type: "string" },
-    isLikelyPrintable: { type: "boolean" },
     starterIdeas: {
       type: "array",
       items: { type: "string" },
       minItems: 2,
       maxItems: 4,
     },
-    intent: { type: "string" },
-    coreNouns: {
-      type: "array",
-      items: { type: "string" },
-      maxItems: 6,
-    },
-    requiredPhrases: {
-      type: "array",
-      items: { type: "string" },
-      maxItems: 8,
-    },
-    excludePhrases: {
-      type: "array",
-      items: { type: "string" },
-      maxItems: 8,
-    },
   },
 } as const;
 
-function fallbackAnalysis(text: string): Analysis {
-  const objectName = text.trim().slice(0, 80) || "3D printable object";
-  return {
-    objectName,
-    searchQueries: objectName ? [objectName] : ["3d printable"],
-    confidence: text.trim() ? "medium" : "low",
-    identificationNote: "",
-    isLikelyPrintable: true,
-    starterIdeas: [
-      "Start with a box the size of the object, then hollow it with the hole tool.",
-      "Add cylinders for holes, posts, or rounded corners and group them when they look right.",
-      "Keep walls around 2 mm so a typical 0.4 mm nozzle can print it cleanly.",
-    ],
-    intent: objectName,
-    coreNouns: objectName ? [objectName] : [],
-    requiredPhrases: [],
-    excludePhrases: [],
-  };
-}
+export type AnalyzeOutcome =
+  | { status: "ok"; analysis: Analysis; photoAnalyzed: boolean; photoNote: string }
+  | { status: "needs_description"; message: string };
 
-function asConfidence(value: unknown): Confidence {
-  return value === "high" || value === "medium" || value === "low" ? value : "medium";
-}
-
-function asStringList(value: unknown, limit: number): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-    .map((item) => item.trim())
-    .slice(0, limit);
-}
-
-function parseAnalysis(raw: string, fallbackText: string): Analysis {
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return fallbackAnalysis(fallbackText);
-  try {
-    const parsed = JSON.parse(match[0]) as Partial<Analysis>;
-    const objectName =
-      typeof parsed.objectName === "string" && parsed.objectName.trim()
-        ? parsed.objectName.trim()
-        : fallbackText.trim() || "3D printable object";
-    const searchQueries = asStringList(parsed.searchQueries, 3);
-    const starterIdeas = asStringList(parsed.starterIdeas, 4);
-    const intent =
-      typeof parsed.intent === "string" && parsed.intent.trim()
-        ? parsed.intent.trim()
-        : objectName;
-    return {
-      objectName,
-      searchQueries: searchQueries.length ? searchQueries : [objectName],
-      confidence: asConfidence(parsed.confidence),
-      identificationNote:
-        typeof parsed.identificationNote === "string" && parsed.identificationNote.trim()
-          ? parsed.identificationNote.trim()
-          : fallbackAnalysis(fallbackText).identificationNote,
-      isLikelyPrintable: parsed.isLikelyPrintable !== false,
-      starterIdeas: starterIdeas.length
-        ? starterIdeas
-        : fallbackAnalysis(objectName).starterIdeas,
-      intent,
-      coreNouns: asStringList(parsed.coreNouns, 6),
-      requiredPhrases: asStringList(parsed.requiredPhrases, 8),
-      excludePhrases: asStringList(parsed.excludePhrases, 8),
-    };
-  } catch {
-    return fallbackAnalysis(fallbackText);
-  }
-}
-
-export async function analyzeRequest(input: {
-  text: string;
-  imageDataUrl?: string;
-}): Promise<Analysis> {
-  const apiKey = process.env.XAI_API_KEY;
-  const text = input.text.trim();
-
-  if (!apiKey) {
-    return fallbackAnalysis(text);
-  }
-
-  const prompt = `You help people find free 3D-printable models.
-
-Identify the object from the photo and/or description, then decide what they should actually search for.
+function promptFor(text: string): string {
+  return `You identify an object in a photo and/or a short description so a maker can find a free 3D-printable model.
 
 Rules:
-- Never use a single generic electronics noun as a search query ("phone", "laptop", "iPad", "headphones"). Those sites will dump cases and random junk.
-- If the photo is a finished electronic device (phone, laptop, tablet, headphones), they usually cannot print the device. Search for the most likely printable accessory (stand, dock, holder, hook) unless the user already asked for a case or another part.
-- Sports gear, toys, household objects, figurines, and simple nouns ARE printable. For “baseball”, search “baseball”. For “mug”, search “mug”.
-- If the photo or text is already a printable part or a simple object (cable clip, fan duct, baseball, mug, cat), search for THAT exact thing.
-- Do not invent extra required function words for a simple noun. For “baseball”, requiredPhrases should be empty.
-- User text always wins. "phone case" means cases. "phone stand" means stands. A photo of a bare phone with no extra text means stands/docks, not cases.
-- searchQueries: 1-3 maker phrases. Lead with the user’s own words when they typed something. Never replace “baseball” with only “baseball replica”.
-- coreNouns: short nouns a good title should mention (baseball, clip, phone).
-- requiredPhrases: only for accessory hunts (stand, dock, clip). Empty when the object name itself is enough.
-- excludePhrases: common false positives (for a phone photo: case, cover, wallet). Empty if none.
-- intent: one short phrase.
-- objectName: the printable thing we are hunting.
-- identificationNote: usually an empty string. Only write one short sentence if the user would otherwise be confused — e.g. the photo is a phone so we looked for stands.
-- isLikelyPrintable is true whenever people print a replica, toy, or accessory of the thing. False only for gibberish.
-- starterIdeas: 2-4 beginner Tinkercad steps using box, cylinder, hole tool.
+- specificName is the most specific common name. genericName is the broader type ("cable clip", "phone").
+- distinguishingFeatures: short visible traits. shape is a few words. materialGuess is a short guess or "unknown".
+- kind is one of the enum values. A finished phone, laptop, tablet, headphones, camera, or similar gadget is electronic_device.
+- isLikelyPrintable is true for parts, accessories, toys, replicas, household objects, tools, and figurines. False only for gibberish. A finished electronic device still counts as printable because people print an accessory for it.
+- Finished electronic device: do not search for the device itself. Search for the most likely printable accessory (stand, dock, holder, hook, mount) unless the user text already names a part (case, stand, clip, mount, skin).
+- User text always wins over the photo. "phone case" means cases. "phone stand" means stands. A bare phone with no extra text means stands and docks, not cases.
+- Never use a single generic electronics noun as a search query ("phone", "laptop", "ipad", "headphones").
+- Sports gear, toys, household objects, figurines, and simple nouns ARE the thing to search. For "baseball", search baseball. For "mug", search mug. For "cable clip", search cable clip. Do not replace a simple noun with only a "replica" query.
+- searchQueries: 4 to 6 maker phrases, best first, most specific then generic synonyms. Example: "cable clip", "cord organizer", "desk cable holder", "cable management clip". When the user typed a printable thing, lead with their words.
+- synonyms: other names for the same printable object.
+- excludePhrases: common false positives. For a phone-stand hunt include case, cover, wallet. Empty array if none.
+- identificationNote: empty string unless the user would be confused. If you redirected from a device to an accessory, one short sentence.
+- starterIdeas: 2-4 beginner Tinkercad steps using box, cylinder, and the hole tool, for the printable thing.
+- confidence: high when obvious, medium when reasonable, low when guessing.
 
 User description: ${text || "(none — photo only)"}`;
+}
+
+export async function analyzeRequest(
+  input: { text: string; imageDataUrl?: string },
+  timeoutMs = 12_000,
+): Promise<AnalyzeOutcome> {
+  const text = input.text.trim();
+  const image = input.imageDataUrl;
+  const apiKey = process.env.XAI_API_KEY?.trim();
+
+  if (!apiKey) {
+    if (image && !text) {
+      console.error("[analyze] XAI_API_KEY is not set; photo was not analyzed");
+      return { status: "needs_description", message: PHOTO_NOT_CONFIGURED };
+    }
+    if (image) {
+      console.error("[analyze] XAI_API_KEY is not set; photo was not analyzed");
+    }
+    return {
+      status: "ok",
+      analysis: normalizeAnalysis(analysisFromText(text), text),
+      photoAnalyzed: false,
+      photoNote: image ? PHOTO_SKIPPED_NOTE : "",
+    };
+  }
 
   const content: Array<
     | { type: "text"; text: string }
-    | { type: "image_url"; image_url: { url: string } }
-  > = [{ type: "text", text: prompt }];
-
-  if (input.imageDataUrl) {
+    | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
+  > = [{ type: "text", text: promptFor(text) }];
+  if (image) {
     content.unshift({
       type: "image_url",
-      image_url: { url: input.imageDataUrl },
+      image_url: { url: image, detail: "auto" },
     });
   }
 
-  const res = await fetch("https://api.x.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "grok-4.5",
-      max_tokens: 750,
-      temperature: 0.15,
-      messages: [{ role: "user", content }],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "print_analysis",
-          schema: ANALYSIS_SCHEMA,
-          strict: true,
-        },
-      },
-    }),
+  const result = await xaiChat({
+    content,
+    schemaName: "print_analysis",
+    schema: ANALYSIS_SCHEMA,
+    maxTokens: 900,
+    temperature: 0.15,
+    timeoutMs,
   });
 
-  if (!res.ok) {
-    if (text) return fallbackAnalysis(text);
-    throw new Error(`xAI API error ${res.status}`);
+  if (!result.ok) {
+    console.error("[analyze] recognition failed", result.reason, result.status ?? "");
+    if (image && !text) {
+      return { status: "needs_description", message: PHOTO_UNAVAILABLE };
+    }
+    return {
+      status: "ok",
+      analysis: normalizeAnalysis(analysisFromText(text), text),
+      photoAnalyzed: false,
+      photoNote: image ? PHOTO_SKIPPED_NOTE : "",
+    };
   }
 
-  const body = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
+  const analysis = normalizeAnalysis(parseAnalysis(result.content, text), text);
+  if (image && !text && !analysis.specificName && analysis.searchQueries.length === 0) {
+    console.error("[analyze] model returned an empty identification");
+    return { status: "needs_description", message: PHOTO_UNAVAILABLE };
+  }
+
+  return {
+    status: "ok",
+    analysis,
+    photoAnalyzed: Boolean(image),
+    photoNote: "",
   };
-  const raw = body.choices?.[0]?.message?.content ?? "";
-  return parseAnalysis(raw, text);
 }
