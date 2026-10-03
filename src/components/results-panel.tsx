@@ -194,11 +194,17 @@ export function ErrorCard({ message, onRetry }: { message: string; onRetry: () =
 
 function SiteStatusLine({ rows }: { rows: SiteStatus[] }) {
   if (rows.length === 0) return null;
-  const parts = rows.map((row) => {
-    const label = SITE_LABEL[row.site];
-    return row.status === "ok" ? `${label} (${row.count})` : `${label} unavailable`;
-  });
-  return <p className="text-sm text-muted">Searched {parts.join(", ")}</p>;
+  const ok = rows.filter((row) => row.status === "ok");
+  const down = rows.filter((row) => row.status !== "ok").map((row) => SITE_LABEL[row.site]);
+  const searched = ok.map((row) => `${SITE_LABEL[row.site]} (${row.count})`).join(", ");
+  return (
+    <p className="text-sm text-muted">
+      {searched ? `Searched ${searched}.` : "No model site answered this time."}
+      {down.length
+        ? ` ${down.join(" and ")} didn’t respond to our server — try the direct search links below.`
+        : ""}
+    </p>
+  );
 }
 
 function StarterIdeas({ outcome }: { outcome: SearchOutcome }) {
