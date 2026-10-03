@@ -200,9 +200,10 @@ test("dedupe and merge collapse urls and normalized titles", () => {
 });
 
 test("verdict requires vision for an exact match", () => {
-  assert.equal(computeVerdict({ topScore10: 8, usedVision: true }).verdict, "exact");
+  assert.equal(computeVerdict({ topScore10: 8, usedVision: true }).verdict, "similar");
+  assert.equal(computeVerdict({ topScore10: 9, usedVision: true }).verdict, "exact");
   assert.equal(
-    computeVerdict({ topScore10: 8, usedVision: true }).verdictTitle,
+    computeVerdict({ topScore10: 9, usedVision: true }).verdictTitle,
     "Yes — a printable match exists",
   );
   assert.equal(computeVerdict({ topScore10: 9.5, usedVision: false }).verdict, "similar");
@@ -406,4 +407,11 @@ test("catalog mappers keep free models and build direct urls", () => {
   assert.equal(things[0].site, "thingiverse");
   assert.equal(things[0].url, "https://www.thingiverse.com/thing:99");
   assert.equal(things[0].author, "maker");
+});
+
+test("text-only analysis adds the head noun phrase as generic name and query", () => {
+  const a = analysisFromText("brass wall hook");
+  assert.equal(a.genericName, "wall hook");
+  assert.deepEqual(a.searchQueries, ["brass wall hook", "wall hook"]);
+  assert.deepEqual(analysisFromText("cable clip").searchQueries, ["cable clip"]);
 });

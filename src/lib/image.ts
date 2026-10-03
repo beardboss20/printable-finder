@@ -1,5 +1,6 @@
 const DECODE_ERROR = "Couldn't read this photo format — try a JPG/PNG or a screenshot";
-const MAX_EDGE = 1280;
+// 1024px is plenty for identification and keeps uploads/xAI payloads small.
+const MAX_EDGE = 1024;
 const MAX_BYTES = 25 * 1024 * 1024;
 
 function looksLikeImage(file: File): boolean {
@@ -29,7 +30,7 @@ export async function fileToCompressedDataUrl(file: File): Promise<string> {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error(DECODE_ERROR);
     ctx.drawImage(bitmap, 0, 0, width, height);
-    return canvas.toDataURL("image/jpeg", 0.85);
+    return canvas.toDataURL("image/jpeg", 0.82);
   } catch (err) {
     if (err instanceof Error && err.message === DECODE_ERROR) throw err;
     throw new Error(DECODE_ERROR);

@@ -5,18 +5,38 @@ type ContentPart =
 export type XaiSuccess = { ok: true; content: string };
 export type XaiFailure = {
   ok: false;
-  reason: "missing_key" | "timeout" | "http" | "network" | "empty";
+  reason: "missing_key" | "timeout" | "http" | "network" | "empty" | "rate_limited";
   status?: number;
 };
 
 type XaiResult = XaiSuccess | XaiFailure;
 
 const ENDPOINT = "https://api.x.ai/v1/chat/completions";
+// Non-reasoning vision model: ~2s per call. Reasoning models (grok-4.6) took ~19s
+// for the same photo, which blew the request budget.
+const DEFAULT_MODEL = "grok-4.20-non-reasoning";
 const FALLBACK_MODEL = "grok-4.5";
+
+// The key may be rate limited (e.g. 5 requests/minute). After a 429, stop calling
+// xAI from this instance for a short cooldown so we fall back quickly instead of
+// stacking more 429s.
+const COOLDOWN_MS = 20_000;
+const cooldown = globalThis as typeof globalThis & { __xaiCooldownUntil__?: number };
+
+export function xaiCoolingDown(): boolean {
+  return (cooldown.__xaiCooldownUntil__ ?? 0) > Date.now();
+}
+
+function startCooldown(retryAfter: string | null): void {
+  const seconds = Number(retryAfter);
+  const ms =
+    Number.isFinite(seconds) && seconds > 0 ? Math.min(60_000, seconds * 1000) : COOLDOWN_MS;
+  cooldown.__xaiCooldownUntil__ = Date.now() + ms;
+}
 
 function preferredModel(): string {
   const configured = process.env.XAI_MODEL?.trim();
-  return configured || "grok-4.6";
+  return configured || DEFAULT_MODEL;
 }
 
 function looksLikeUnknownModel(status: number, body: string): boolean {
@@ -39,6 +59,7 @@ export async function xaiChat(options: {
 }): Promise<XaiResult> {
   const apiKey = process.env.XAI_API_KEY?.trim();
   if (!apiKey) return { ok: false, reason: "missing_key" };
+  if (xaiCoolingDown()) return { ok: false, reason: "rate_limited", status: 429 };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, options.timeoutMs));
@@ -70,6 +91,11 @@ export async function xaiChat(options: {
   try {
     const primary = preferredModel();
     let response = await post(primary);
+    if (response.status === 429) {
+      startCooldown(response.headers.get("retry-after"));
+      console.error("[xai] rate limited (429)");
+      return { ok: false, reason: "rate_limited", status: 429 };
+    }
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
       const retry = looksLikeUnknownModel(response.status, errText) && primary !== FALLBACK_MODEL;
@@ -82,6 +108,11 @@ export async function xaiChat(options: {
       }
     }
 
+    if (response.status === 429) {
+      startCooldown(response.headers.get("retry-after"));
+      console.error("[xai] rate limited (429)");
+      return { ok: false, reason: "rate_limited", status: 429 };
+    }
     if (!response.ok) {
       console.error("[xai] API error", response.status);
       return { ok: false, reason: "http", status: response.status };

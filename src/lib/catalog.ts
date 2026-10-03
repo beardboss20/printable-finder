@@ -102,7 +102,30 @@ async function fetchJson(
   }
 }
 
+/**
+ * Printables' search requires every word to match, so descriptive phrases like
+ * "carved wooden figurine" or "paper flower vase" return nothing. When that
+ * happens, retry once with the head noun phrase (the last two words).
+ */
+export function printablesFallbackQuery(query: string): string | null {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= 2) return null;
+  return words.slice(-2).join(" ");
+}
+
 async function searchPrintables(
+  query: string,
+  limit: number,
+  signal: AbortSignal,
+): Promise<PrintableModel[]> {
+  const first = await searchPrintablesOnce(query, limit, signal);
+  if (first.length) return first;
+  const shorter = printablesFallbackQuery(query);
+  if (!shorter || signal.aborted) return first;
+  return searchPrintablesOnce(shorter, limit, signal);
+}
+
+async function searchPrintablesOnce(
   query: string,
   limit: number,
   signal: AbortSignal,
