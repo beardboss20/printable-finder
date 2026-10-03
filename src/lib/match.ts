@@ -19,10 +19,11 @@ const SCORE_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["index", "sameObjectType", "score", "reason"],
+        required: ["index", "sameObjectType", "keyFeaturesMatch", "score", "reason"],
         properties: {
           index: { type: "integer" },
           sameObjectType: { type: "boolean" },
+          keyFeaturesMatch: { type: "boolean" },
           score: { type: "integer" },
           reason: { type: "string" },
         },
@@ -39,10 +40,11 @@ const MIN_SCORE = 5;
 const RUBRIC = `Scoring rubric (integers 0-10):
 - 9-10: essentially the same object as the photo; printing it would give the user what they photographed.
 - 7-8: same object type and function with a similar shape.
-- 5-6: same object type but a noticeably different shape or style, or a very close relative.
+- 5-6: same object type but a noticeably different shape or style, or a very close relative (e.g. a plain coat hook for an ornate brass wall hook).
 - 2-4: only loosely related (same broad category, or shares one feature).
 - 0-1: a different object. Sharing a word is not enough: a "top hat" printer part is 0 for a figurine wearing a top hat.
 Decide sameObjectType first: true only if the candidate is the same kind of object with the same purpose (a figurine/statue for a figurine, a hook for a hook, a planter/pot for a planter). Functional printer parts, tools, or brackets are never the same type as a decorative figure, and vice versa. If sameObjectType is false the score must be 0-3.
+keyFeaturesMatch: true only if the candidate's own picture visibly has the photographed object's shape-defining features (ignore color, material, and finish). A plain knob does not match a star-shaped knob. Title-only candidates (no picture) are always false. Scores of 9-10 require keyFeaturesMatch true.
 Be strict. Most candidates from a keyword search should score below 7.`;
 
 function clampScore(value: unknown): number | null {
@@ -65,11 +67,15 @@ function parseScoreMap(raw: string, count: number): Map<number, ScoreRow> | null
         score?: unknown;
         reason?: unknown;
         sameObjectType?: unknown;
+        keyFeaturesMatch?: unknown;
       };
       const index = typeof record.index === "number" ? record.index : Number(record.index);
       let score = clampScore(record.score);
       // A different kind of object can never be a real match, whatever the score says.
       if (score != null && record.sameObjectType === false) score = Math.min(score, 3);
+      // 9-10 ("essentially the same object") also needs the photo's shape-defining
+      // features to be visible in the candidate; otherwise it is at best "similar".
+      if (score != null && record.keyFeaturesMatch !== true) score = Math.min(score, 8);
       if (!Number.isInteger(index) || index < 1 || index > count || score == null) continue;
       const reason =
         typeof record.reason === "string"
@@ -330,7 +336,7 @@ export async function rankCandidates(input: {
   const photo = input.imageDataUrl;
 
   if (hasKey && photo && budget >= 2_000) {
-    const visionTimeout = Math.min(15_000, budget);
+    const visionTimeout = Math.min(10_000, budget);
     const vision = await visionRank(shortlist, input.analysis, photo, visionTimeout);
     if (vision) return { models: vision, usedVision: true, rateLimited: false };
   }
@@ -338,7 +344,7 @@ export async function rankCandidates(input: {
   const elapsed = Date.now() - started;
   const remaining = budget - elapsed;
   if (hasKey && remaining >= 2_000 && !xaiCoolingDown()) {
-    const text = await textRank(shortlist, input.analysis, Math.min(8_000, remaining));
+    const text = await textRank(shortlist, input.analysis, Math.min(5_000, remaining));
     if (text) return { models: text, usedVision: false, rateLimited: false };
   }
 
